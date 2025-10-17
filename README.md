@@ -32,21 +32,16 @@ CA2/
 │   ├── Dockerfile
 │   ├── producer.py
 │   ├── requirements.txt
-│   └── config.env
 ├── processor/
 │   ├── Dockerfile
 │   ├── processor.py
 │   ├── requirements.txt
-│   └── config.env
-├── kafka/
-│   └── kafka-config.env
 ├── mongodb/
 │   ├── init-db.js
 │   └── mongodb.env
 ├── configs/
 │   ├── producer-config.yml
 │   ├── processor-config.yml
-│   └── kafka-config.yml
 ├── secrets/
 │   ├── mongodb-password.txt
 │   ├── kafka-password.txt
