@@ -1,0 +1,337 @@
+.PHONY: help init build deploy status smoke-test scaling-test logs destroy validate scale-up scale-down
+
+# Default target
+help:
+	@echo "CA2 Container Orchestration - Docker Swarm - Available Commands:"
+	@echo ""
+	@echo "  Setup Commands:"
+	@echo "  ---------------"
+	@echo "  make init           - Initialize Docker Swarm cluster"
+	@echo "  make build          - Build and push custom container images"
+	@echo ""
+	@echo "  Deployment Commands:"
+	@echo "  -------------------"
+	@echo "  make deploy         - Deploy the complete pipeline stack"
+	@echo "  make validate       - Validate stack deployment"
+	@echo "  make status         - Check deployment status"
+	@echo ""
+	@echo "  Testing Commands:"
+	@echo "  ----------------"
+	@echo "  make smoke-test     - Run smoke tests to verify functionality"
+	@echo "  make scaling-test   - Demonstrate scaling capabilities"
+	@echo ""
+	@echo "  Scaling Commands:"
+	@echo "  ----------------"
+	@echo "  make scale-up       - Scale producers to 5 replicas"
+	@echo "  make scale-down     - Scale producers to 1 replica"
+	@echo ""
+	@echo "  Monitoring Commands:"
+	@echo "  -------------------"
+	@echo "  make logs           - Tail logs from all services"
+	@echo "  make logs-producer  - Tail producer logs"
+	@echo "  make logs-processor - Tail processor logs"
+	@echo "  make logs-kafka     - Tail Kafka logs"
+	@echo "  make health         - Check health endpoints"
+	@echo ""
+	@echo "  Cleanup Commands:"
+	@echo "  ----------------"
+	@echo "  make destroy        - Remove all deployed resources"
+	@echo "  make clean-all      - Remove stack, volumes, secrets, and networks"
+	@echo ""
+
+# Variables
+STACK_NAME := metals-pipeline
+REGISTRY := ${REGISTRY}
+DOCKER := docker
+
+# Check prerequisites
+check-swarm:
+	@if ! $(DOCKER) info | grep -q "Swarm: active"; then \
+		echo "Error: Docker Swarm is not initialized"; \
+		echo "Run 'make init' first"; \
+		exit 1; \
+	fi
+
+# Initialize Docker Swarm
+init:
+	@echo "Initializing Docker Swarm..."
+	@./scripts/init-swarm.sh
+	@echo "✓ Swarm initialized"
+
+# Build and push images
+build:
+	@echo "Building custom container images..."
+	@./scripts/build-images.sh
+	@echo "✓ Images built"
+
+# Create secrets if they don't exist
+create-secrets:
+	@echo "Checking and creating secrets..."
+	@if ! $(DOCKER) secret inspect mongodb-password >/dev/null 2>&1; then \
+		echo "SecureMongoP@ss123" | $(DOCKER) secret create mongodb-password -; \
+		echo "Created mongodb-password"; \
+	fi
+	@if ! $(DOCKER) secret inspect kafka-password >/dev/null 2>&1; then \
+		echo "KafkaAdm1nP@ss456" | $(DOCKER) secret create kafka-password -; \
+		echo "Created kafka-password"; \
+	fi
+	@if ! $(DOCKER) secret inspect api-key >/dev/null 2>&1; then \
+		echo "metals-api-key-placeholder" | $(DOCKER) secret create api-key -; \
+		echo "Created api-key"; \
+	fi
+	@echo "✓ All secrets ready"
+
+# Deploy full stack
+deploy: check-swarm create-secrets
+	@echo "Deploying $(STACK_NAME) stack..."
+	@./deploy.sh
+	@echo ""
+	@echo "Deployment initiated. Run 'make validate' to check status."
+
+# Validate deployment
+validate: check-swarm
+	@echo "Validating stack deployment..."
+	@./scripts/validate-stack.sh
+
+# Check deployment status
+status: check-swarm
+	@echo "===== Stack Services ====="
+	@$(DOCKER) stack services $(STACK_NAME)
+	@echo ""
+	@echo "===== Task Status ====="
+	@$(DOCKER) stack ps $(STACK_NAME) --no-trunc
+	@echo ""
+	@echo "===== Networks ====="
+	@$(DOCKER) network ls | grep $(STACK_NAME)
+	@echo ""
+	@echo "===== Volumes ====="
+	@$(DOCKER) volume ls | grep $(STACK_NAME)
+	@echo ""
+	@echo "===== Secrets ====="
+	@$(DOCKER) secret ls
+
+# Run smoke test
+smoke-test: check-swarm
+	@echo "Running smoke tests..."
+	@./scripts/smoke-test.sh
+
+# Run scaling test
+scaling-test: check-swarm
+	@echo "Running scaling demonstration..."
+	@./scripts/scaling-test.sh
+
+# View logs
+logs: check-swarm
+	@echo "Tailing logs from all services (Ctrl+C to stop)..."
+	@$(DOCKER) service logs -f $(STACK_NAME)_producer &
+	@$(DOCKER) service logs -f $(STACK_NAME)_processor &
+	@$(DOCKER) service logs -f $(STACK_NAME)_kafka &
+	@wait
+
+logs-producer: check-swarm
+	@$(DOCKER) service logs -f $(STACK_NAME)_producer
+
+logs-processor: check-swarm
+	@$(DOCKER) service logs -f $(STACK_NAME)_processor
+
+logs-kafka: check-swarm
+	@$(DOCKER) service logs -f $(STACK_NAME)_kafka
+
+logs-mongodb: check-swarm
+	@$(DOCKER) service logs -f $(STACK_NAME)_mongodb
+
+logs-zookeeper: check-swarm
+	@$(DOCKER) service logs -f $(STACK_NAME)_zookeeper
+
+# Check health endpoints
+health:
+	@echo "Checking health endpoints..."
+	@echo ""
+	@echo "Producer Health:"
+	@curl -s http://localhost:8000/health | jq '.' || echo "Producer not responding"
+	@echo ""
+	@echo "Processor Health:"
+	@curl -s http://localhost:8001/health | jq '.' || echo "Processor not responding"
+	@echo ""
+	@echo "Producer Stats:"
+	@curl -s http://localhost:8000/stats | jq '.' || echo "Stats not available"
+	@echo ""
+	@echo "Processor Stats:"
+	@curl -s http://localhost:8001/stats | jq '.' || echo "Stats not available"
+
+# Scale producers up
+scale-up: check-swarm
+	@echo "Scaling producers to 5 replicas..."
+	@$(DOCKER) service scale $(STACK_NAME)_producer=5
+	@echo "Waiting for services to scale..."
+	@sleep 10
+	@$(DOCKER) service ps $(STACK_NAME)_producer
+
+# Scale producers down
+scale-down: check-swarm
+	@echo "Scaling producers to 1 replica..."
+	@$(DOCKER) service scale $(STACK_NAME)_producer=1
+	@$(DOCKER) service scale $(STACK_NAME)_processor=1
+	@sleep 5
+	@$(DOCKER) service ls --filter name=$(STACK_NAME)
+
+# Custom scaling
+scale: check-swarm
+	@read -p "Service name (producer/processor): " service; \
+	read -p "Number of replicas: " replicas; \
+	$(DOCKER) service scale $(STACK_NAME)_$$service=$$replicas; \
+	echo "Scaled $$service to $$replicas replicas"
+
+# Destroy stack
+destroy: check-swarm
+	@echo "Destroying $(STACK_NAME) stack..."
+	@./destroy.sh
+
+# Clean everything (stack, volumes, secrets, networks)
+clean-all: destroy
+	@echo "Cleaning up volumes..."
+	@$(DOCKER) volume ls | grep $(STACK_NAME) | awk '{print $$2}' | xargs -r $(DOCKER) volume rm || true
+	@echo "Cleaning up networks..."
+	@$(DOCKER) network ls | grep $(STACK_NAME) | awk '{print $$2}' | xargs -r $(DOCKER) network rm || true
+	@echo "Removing secrets..."
+	@$(DOCKER) secret rm mongodb-password kafka-password api-key 2>/dev/null || true
+	@echo "✓ Complete cleanup done"
+
+# Debug commands
+debug-producer: check-swarm
+	@echo "Producer Service Details:"
+	@$(DOCKER) service inspect $(STACK_NAME)_producer --pretty
+	@echo ""
+	@echo "Producer Tasks:"
+	@$(DOCKER) service ps $(STACK_NAME)_producer --no-trunc
+	@echo ""
+	@echo "Producer Logs (last 50 lines):"
+	@$(DOCKER) service logs $(STACK_NAME)_producer --tail 50
+
+debug-processor: check-swarm
+	@echo "Processor Service Details:"
+	@$(DOCKER) service inspect $(STACK_NAME)_processor --pretty
+	@echo ""
+	@echo "Processor Tasks:"
+	@$(DOCKER) service ps $(STACK_NAME)_processor --no-trunc
+	@echo ""
+	@echo "Processor Logs (last 50 lines):"
+	@$(DOCKER) service logs $(STACK_NAME)_processor --tail 50
+
+debug-kafka: check-swarm
+	@echo "Kafka Service Details:"
+	@$(DOCKER) service inspect $(STACK_NAME)_kafka --pretty
+	@echo ""
+	@echo "Kafka Tasks:"
+	@$(DOCKER) service ps $(STACK_NAME)_kafka --no-trunc
+	@echo ""
+	@echo "Kafka Logs (last 50 lines):"
+	@$(DOCKER) service logs $(STACK_NAME)_kafka --tail 50
+
+debug-mongodb: check-swarm
+	@echo "MongoDB Service Details:"
+	@$(DOCKER) service inspect $(STACK_NAME)_mongodb --pretty
+	@echo ""
+	@echo "MongoDB Tasks:"
+	@$(DOCKER) service ps $(STACK_NAME)_mongodb --no-trunc
+	@echo ""
+	@echo "MongoDB Logs (last 50 lines):"
+	@$(DOCKER) service logs $(STACK_NAME)_mongodb --tail 50
+
+# Network inspection
+inspect-networks: check-swarm
+	@echo "===== Network List ====="
+	@$(DOCKER) network ls | grep $(STACK_NAME)
+	@echo ""
+	@echo "===== metals-frontend ====="
+	@$(DOCKER) network inspect $(STACK_NAME)_metals-frontend
+	@echo ""
+	@echo "===== metals-backend ====="
+	@$(DOCKER) network inspect $(STACK_NAME)_metals-backend
+	@echo ""
+	@echo "===== metals-monitoring ====="
+	@$(DOCKER) network inspect $(STACK_NAME)_metals-monitoring
+
+# Volume inspection
+inspect-volumes: check-swarm
+	@echo "===== Volume List ====="
+	@$(DOCKER) volume ls | grep $(STACK_NAME)
+	@echo ""
+	@for vol in $$($(DOCKER) volume ls | grep $(STACK_NAME) | awk '{print $$2}'); do \
+		echo "===== $$vol ====="; \
+		$(DOCKER) volume inspect $$vol; \
+		echo ""; \
+	done
+
+# Service resource usage
+stats: check-swarm
+	@echo "Service Resource Usage:"
+	@$(DOCKER) stats --no-stream $$($(DOCKER) ps -q -f name=$(STACK_NAME))
+
+# Node information
+nodes: check-swarm
+	@echo "Swarm Nodes:"
+	@$(DOCKER) node ls
+	@echo ""
+	@echo "Node Details:"
+	@for node in $$($(DOCKER) node ls -q); do \
+		echo "===== Node $$node ====="; \
+		$(DOCKER) node inspect $$node --pretty; \
+		echo ""; \
+	done
+
+# Quick start (full deployment from scratch)
+quickstart: init build deploy
+	@echo ""
+	@echo "Waiting 60 seconds for services to start..."
+	@sleep 60
+	@make validate
+	@make smoke-test
+	@echo ""
+	@echo "✓ Quickstart complete!"
+
+# Update stack (for configuration changes)
+update: check-swarm
+	@echo "Updating stack configuration..."
+	@$(DOCKER) stack deploy -c docker-compose.yml $(STACK_NAME)
+	@echo "✓ Stack updated"
+
+# Restart specific service
+restart: check-swarm
+	@read -p "Service name to restart (producer/processor/kafka/mongodb): " service; \
+	$(DOCKER) service update --force $(STACK_NAME)_$$service; \
+	echo "Restarted $$service"
+
+# Test Kafka connectivity
+test-kafka: check-swarm
+	@echo "Testing Kafka connectivity..."
+	@KAFKA_CONTAINER=$$($(DOCKER) ps -q -f name=$(STACK_NAME)_kafka | head -1); \
+	if [ -n "$$KAFKA_CONTAINER" ]; then \
+		echo "Kafka Topics:"; \
+		$(DOCKER) exec $$KAFKA_CONTAINER kafka-topics --bootstrap-server localhost:9092 --list; \
+		echo ""; \
+		echo "metals-prices topic details:"; \
+		$(DOCKER) exec $$KAFKA_CONTAINER kafka-topics --bootstrap-server localhost:9092 --describe --topic metals-prices; \
+	else \
+		echo "Kafka container not found"; \
+	fi
+
+# Test MongoDB connectivity
+test-mongodb: check-swarm
+	@echo "Testing MongoDB connectivity..."
+	@MONGODB_CONTAINER=$$($(DOCKER) ps -q -f name=$(STACK_NAME)_mongodb | head -1); \
+	MONGODB_PASSWORD=$$($(DOCKER) secret inspect mongodb-password --format '{{.Spec.Data}}' | base64 -d); \
+	if [ -n "$$MONGODB_CONTAINER" ]; then \
+		echo "Document count:"; \
+		$(DOCKER) exec $$MONGODB_CONTAINER mongosh -u admin -p "$$MONGODB_PASSWORD" --authenticationDatabase admin metals --eval "db.prices.countDocuments({})" --quiet; \
+		echo ""; \
+		echo "Sample document:"; \
+		$(DOCKER) exec $$MONGODB_CONTAINER mongosh -u admin -p "$$MONGODB_PASSWORD" --authenticationDatabase admin metals --eval "db.prices.findOne()" --quiet; \
+	else \
+		echo "MongoDB container not found"; \
+	fi
+
+# Complete validation suite
+full-test: validate smoke-test scaling-test
+	@echo ""
+	@echo "✓ All tests passed!"
