@@ -47,11 +47,6 @@ services:
       - metals-frontend
       - metals-backend
       - metals-monitoring
-    ports:
-      - target: 9092
-        published: 9092
-        protocol: tcp
-        mode: host
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
