@@ -1,0 +1,337 @@
+version: '3.8'
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    hostname: zookeeper
+    networks:
+      - metals-backend
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_SERVER_ID: 1
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-log:/var/lib/zookeeper/log
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      labels:
+        com.metals.pipeline: "true"
+        com.metals.tier: "messaging"
+        com.metals.service: "zookeeper"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    hostname: kafka
+    networks:
+      - metals-frontend
+      - metals-backend
+      - metals-monitoring
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_COMPRESSION_TYPE: snappy
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+      KAFKA_MESSAGE_MAX_BYTES: 1000000
+      KAFKA_REPLICA_FETCH_MAX_BYTES: 1048576
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 3
+      labels:
+        com.metals.pipeline: "true"
+        com.metals.tier: "messaging"
+        com.metals.service: "kafka"
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    depends_on:
+      - zookeeper
+
+  mongodb:
+    image: mongo:7.0
+    hostname: mongodb
+    networks:
+      - metals-backend
+      - metals-monitoring
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_DATABASE: metals
+    secrets:
+      - source: mongodb-password
+        target: /run/secrets/mongodb-password
+    volumes:
+      - mongodb-data:/data/db
+      - mongodb-log:/var/log/mongodb
+      - type: bind
+        source: ./mongodb/init-db.js
+        target: /docker-entrypoint-initdb.d/init-db.js
+        read_only: true
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      labels:
+        com.metals.pipeline: "true"
+        com.metals.tier: "data"
+        com.metals.service: "mongodb"
+        com.metals.access: "internal"
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    command: >
+      bash -c "mongod --bind_ip_all 
+      --auth 
+      --setParameter authenticationMechanisms=SCRAM-SHA-256"
+
+  processor:
+    image: ${REGISTRY:-hiphophippo}/metals-processor:v1.0
+    hostname: processor
+    networks:
+      - metals-backend
+      - metals-monitoring
+    ports:
+      - target: 8001
+        published: 8001
+        protocol: tcp
+        mode: ingress
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: metals-prices
+      KAFKA_GROUP_ID: metals-processor-group
+      MONGODB_HOST: mongodb
+      MONGODB_PORT: 27017
+      MONGODB_DATABASE: metals
+      MONGODB_USERNAME: admin
+      PROCESSOR_BATCH_SIZE: 50
+      PROCESSOR_COMMIT_INTERVAL: 5
+      LOG_LEVEL: INFO
+    secrets:
+      - source: mongodb-password
+        target: /run/secrets/mongodb-password
+    configs:
+      - source: processor-config
+        target: /app/config.yml
+    deploy:
+      replicas: 1
+      mode: replicated
+      placement:
+        constraints:
+          - node.role == worker
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.2'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+        order: start-first
+      rollback_config:
+        parallelism: 1
+        delay: 5s
+      labels:
+        com.metals.pipeline: "true"
+        com.metals.tier: "processing"
+        com.metals.service: "processor"
+        com.metals.scalable: "true"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      - kafka
+      - mongodb
+
+  producer:
+    image: ${REGISTRY:-hiphophippo}/metals-producer:v1.0
+    hostname: producer
+    networks:
+      - metals-frontend
+      - metals-monitoring
+    ports:
+      - target: 8000
+        published: 8000
+        protocol: tcp
+        mode: ingress
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: metals-prices
+      PRODUCER_INTERVAL: 5
+      LOG_LEVEL: INFO
+    secrets:
+      - source: api-key
+        target: /run/secrets/api-key
+    configs:
+      - source: producer-config
+        target: /app/config.yml
+    deploy:
+      replicas: 1
+      mode: replicated
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+      update_config:
+        parallelism: 2
+        delay: 10s
+        failure_action: rollback
+        order: start-first
+      rollback_config:
+        parallelism: 1
+        delay: 5s
+      labels:
+        com.metals.pipeline: "true"
+        com.metals.tier: "ingestion"
+        com.metals.service: "producer"
+        com.metals.scalable: "true"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+    depends_on:
+      - kafka
+
+networks:
+  metals-frontend:
+    driver: overlay
+    attachable: false
+    driver_opts:
+      encrypted: "true"
+    labels:
+      com.metals.network: "frontend"
+      com.metals.description: "Producer to Kafka communication"
+  
+  metals-backend:
+    driver: overlay
+    attachable: false
+    driver_opts:
+      encrypted: "true"
+    labels:
+      com.metals.network: "backend"
+      com.metals.description: "Kafka to Processor to MongoDB communication"
+  
+  metals-monitoring:
+    driver: overlay
+    attachable: false
+    labels:
+      com.metals.network: "monitoring"
+      com.metals.description: "Health check and monitoring access"
+
+volumes:
+  kafka-data:
+    driver: local
+    labels:
+      com.metals.volume: "kafka-data"
+  
+  zookeeper-data:
+    driver: local
+    labels:
+      com.metals.volume: "zookeeper-data"
+  
+  zookeeper-log:
+    driver: local
+    labels:
+      com.metals.volume: "zookeeper-log"
+  
+  mongodb-data:
+    driver: local
+    labels:
+      com.metals.volume: "mongodb-data"
+  
+  mongodb-log:
+    driver: local
+    labels:
+      com.metals.volume: "mongodb-log"
+
+secrets:
+  mongodb-password:
+    external: true
+  kafka-password:
+    external: true
+  api-key:
+    external: true
+
+configs:
+  processor-config:
+    file: ./configs/processor-config.yml
+  producer-config:
+    file: ./configs/producer-config.yml

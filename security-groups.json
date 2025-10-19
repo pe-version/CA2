@@ -1,0 +1,130 @@
+[
+    [
+        {
+            "IpProtocol": "tcp",
+            "FromPort": 2377,
+            "ToPort": 2377,
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+                {
+                    "Description": "Docker Swarm cluster management",
+                    "CidrIp": "10.0.0.0/16"
+                }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+        },
+        {
+            "IpProtocol": "tcp",
+            "FromPort": 8001,
+            "ToPort": 8001,
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+                {
+                    "Description": "Processor health endpoint",
+                    "CidrIp": "0.0.0.0/0"
+                }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+        },
+        {
+            "IpProtocol": "tcp",
+            "FromPort": 22,
+            "ToPort": 22,
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+                {
+                    "Description": "SSH access",
+                    "CidrIp": "0.0.0.0/0"
+                }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+        },
+        {
+            "IpProtocol": "tcp",
+            "FromPort": 8000,
+            "ToPort": 8000,
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+                {
+                    "Description": "Producer health endpoint",
+                    "CidrIp": "0.0.0.0/0"
+                }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+        },
+        {
+            "IpProtocol": "udp",
+            "FromPort": 7946,
+            "ToPort": 7946,
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+                {
+                    "Description": "Docker Swarm node communication UDP",
+                    "CidrIp": "10.0.0.0/16"
+                }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+        },
+        {
+            "IpProtocol": "tcp",
+            "FromPort": 7946,
+            "ToPort": 7946,
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+                {
+                    "Description": "Docker Swarm node communication TCP",
+                    "CidrIp": "10.0.0.0/16"
+                }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+        },
+        {
+            "IpProtocol": "tcp",
+            "FromPort": 27017,
+            "ToPort": 27017,
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+                {
+                    "Description": "MongoDB internal",
+                    "CidrIp": "10.0.0.0/16"
+                }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+        },
+        {
+            "IpProtocol": "udp",
+            "FromPort": 4789,
+            "ToPort": 4789,
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+                {
+                    "Description": "Docker Swarm overlay network",
+                    "CidrIp": "10.0.0.0/16"
+                }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+        },
+        {
+            "IpProtocol": "tcp",
+            "FromPort": 9092,
+            "ToPort": 9092,
+            "UserIdGroupPairs": [],
+            "IpRanges": [
+                {
+                    "Description": "Kafka internal",
+                    "CidrIp": "10.0.0.0/16"
+                }
+            ],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+        }
+    ]
+]

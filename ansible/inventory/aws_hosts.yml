@@ -1,0 +1,19 @@
+all:
+  children:
+    swarm_manager:
+      hosts:
+        manager:
+          ansible_host: 3.147.195.156
+          private_ip: 10.0.1.129
+    swarm_workers:
+      hosts:
+        worker1:
+          ansible_host: 3.17.175.254
+          private_ip: 10.0.1.176
+        worker2:
+          ansible_host: 3.146.34.43
+          private_ip: 10.0.1.91
+  vars:
+    ansible_user: ubuntu
+    ansible_ssh_private_key_file: ~/.ssh/ca0-keys.pem
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no'

@@ -1,0 +1,16 @@
+producer:
+  name: metals-producer
+  version: v1.0
+  interval: 5
+  
+kafka:
+  topic: metals-prices
+  compression: snappy
+  
+metals:
+  - gold
+  - silver
+  - platinum
+  - palladium
+  - copper
+  - aluminum

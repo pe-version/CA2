@@ -1,0 +1,79 @@
+---
+- name: Destroy CA2 Metals Pipeline Stack
+  hosts: swarm_manager
+  become: yes
+  vars:
+    stack_name: metals-pipeline
+    
+  tasks:
+    - name: Check if stack exists
+      command: docker stack ls --format '{{ "{{.Name}}" }}'
+      register: existing_stacks
+      changed_when: false
+
+    - name: Remove stack
+      command: docker stack rm {{ stack_name }}
+      when: "stack_name in existing_stacks.stdout"
+      register: stack_removed
+
+    - name: Wait for stack removal
+      pause:
+        seconds: 15
+      when: stack_removed.changed
+
+    - name: Wait for containers to stop
+      shell: docker ps --filter name={{ stack_name }} --format '{{ "{{.Names}}" }}'
+      register: running_containers
+      until: running_containers.stdout == ""
+      retries: 12
+      delay: 5
+      changed_when: false
+      when: stack_removed.changed
+
+    - name: List remaining volumes
+      command: docker volume ls --filter name={{ stack_name }} --format '{{ "{{.Name}}" }}'
+      register: stack_volumes
+      changed_when: false
+
+    - name: Display volumes (will not auto-delete)
+      debug:
+        msg: "Remaining volumes: {{ stack_volumes.stdout_lines }}"
+      when: stack_volumes.stdout != ""
+
+    - name: Optionally remove volumes
+      command: docker volume rm {{ item }}
+      loop: "{{ stack_volumes.stdout_lines }}"
+      when: 
+        - remove_volumes | default(false)
+        - stack_volumes.stdout != ""
+      ignore_errors: yes
+
+    - name: List secrets
+      command: docker secret ls --format '{{ "{{.Name}}" }}'
+      register: all_secrets
+      changed_when: false
+
+    - name: Optionally remove secrets
+      command: docker secret rm {{ item }}
+      loop:
+        - mongodb-password
+        - kafka-password
+        - api-key
+      when:
+        - remove_secrets | default(false)
+        - item in all_secrets.stdout
+      ignore_errors: yes
+
+    - name: Clean up deployment directory
+      file:
+        path: /home/ubuntu/ca2-deployment
+        state: absent
+      when: cleanup_files | default(false)
+
+    - name: Display cleanup summary
+      debug:
+        msg:
+          - "Stack '{{ stack_name }}' removed"
+          - "Volumes preserved (use -e remove_volumes=true to delete)"
+          - "Secrets preserved (use -e remove_secrets=true to delete)"
+          - "Files preserved (use -e cleanup_files=true to delete)"

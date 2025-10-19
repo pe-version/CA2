@@ -1,0 +1,6 @@
+ID             NAME                        MODE         REPLICAS   IMAGE                               PORTS
+ney22r8zji2l   metals-pipeline_kafka       replicated   1/1        confluentinc/cp-kafka:7.5.0         
+5ofvrln1ppgh   metals-pipeline_mongodb     replicated   1/1        mongo:7.0                           
+wt5mlmvlh68l   metals-pipeline_processor   replicated   0/1        hiphophippo/metals-processor:v1.0   *:8001->8001/tcp
+k5vusu82ab1y   metals-pipeline_producer    replicated   0/1        hiphophippo/metals-producer:v1.0    *:8000->8000/tcp
+hvt9y4agdw26   metals-pipeline_zookeeper   replicated   1/1        confluentinc/cp-zookeeper:7.5.0     

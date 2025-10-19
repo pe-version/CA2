@@ -1,0 +1,124 @@
+---
+- name: Deploy CA2 Metals Pipeline Stack
+  hosts: swarm_manager
+  become: yes
+  vars:
+    stack_name: metals-pipeline
+    registry_username: hiphophippo  # Change to your Docker Hub username
+    
+  tasks:
+    - name: Create deployment directory
+      file:
+        path: /home/ubuntu/ca2-deployment
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+
+    - name: Copy docker-compose.aws.yml
+      copy:
+        src: ../docker-compose.aws.yml
+        dest: /home/ubuntu/ca2-deployment/docker-compose.aws.yml
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+
+    - name: Create configs directory
+      file:
+        path: /home/ubuntu/ca2-deployment/configs
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+
+    - name: Copy config files
+      copy:
+        src: "../configs/{{ item }}"
+        dest: "/home/ubuntu/ca2-deployment/configs/{{ item }}"
+        owner: ubuntu
+        group: ubuntu
+      loop:
+        - producer-config.yml
+        - processor-config.yml
+
+    - name: Create mongodb directory
+      file:
+        path: /home/ubuntu/ca2-deployment/mongodb
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+
+    - name: Copy MongoDB init script
+      copy:
+        src: ../mongodb/init-db.js
+        dest: /home/ubuntu/ca2-deployment/mongodb/init-db.js
+        owner: ubuntu
+        group: ubuntu
+
+    - name: Check if secrets exist
+      command: docker secret ls --format '{{ "{{.Name}}" }}'
+      register: existing_secrets
+      changed_when: false
+
+    - name: Create mongodb-password secret
+      shell: echo "SecureMongoP@ss123" | docker secret create mongodb-password -
+      when: "'mongodb-password' not in existing_secrets.stdout"
+
+    - name: Create kafka-password secret
+      shell: echo "KafkaAdm1nP@ss456" | docker secret create kafka-password -
+      when: "'kafka-password' not in existing_secrets.stdout"
+
+    - name: Create api-key secret
+      shell: echo "metals-api-key-placeholder" | docker secret create api-key -
+      when: "'api-key' not in existing_secrets.stdout"
+
+    - name: Deploy stack
+      command: >
+        docker stack deploy
+        -c /home/ubuntu/ca2-deployment/docker-compose.aws.yml
+        {{ stack_name }}
+      environment:
+        REGISTRY: "{{ registry_username }}"
+      become_user: ubuntu
+
+    - name: Wait for services to start
+      pause:
+        seconds: 180
+
+    - name: Check stack status
+      command: docker stack services {{ stack_name }}
+      register: stack_status
+      changed_when: false
+
+    - name: Display stack services
+      debug:
+        msg: "{{ stack_status.stdout_lines }}"
+
+    - name: Get detailed task status
+      command: docker stack ps {{ stack_name }} --no-trunc
+      register: task_status
+      changed_when: false
+
+    - name: Display task status
+      debug:
+        msg: "{{ task_status.stdout_lines }}"
+
+    - name: Wait for services to be running
+      shell: docker service ls --filter name={{ stack_name }} --format '{{ "{{.Replicas}}" }}' | grep -v "0/"
+      register: running_check
+      until: running_check.rc == 0
+      retries: 20
+      delay: 15
+      changed_when: false
+      failed_when: false
+
+    - name: Display deployment information
+      debug:
+        msg:
+          - "Stack '{{ stack_name }}' deployed successfully!"
+          - "Health endpoints:"
+          - "  Producer:  http://{{ ansible_host }}:8000/health"
+          - "  Processor: http://{{ ansible_host }}:8001/health"
+          - ""
+          - "To view logs:"
+          - "  docker service logs {{ stack_name }}_producer"
+          - "  docker service logs {{ stack_name }}_processor"

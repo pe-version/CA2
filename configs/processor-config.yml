@@ -1,0 +1,16 @@
+processor:
+  name: metals-processor
+  version: v1.0
+  batch_size: 50
+  commit_interval: 5
+  
+kafka:
+  topic: metals-prices
+  group_id: metals-processor-group
+  
+mongodb:
+  database: metals
+  collection: prices
+  
+logging:
+  level: INFO

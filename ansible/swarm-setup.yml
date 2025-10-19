@@ -1,0 +1,157 @@
+---
+- name: Install Docker on all nodes
+  hosts: all
+  become: yes
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install required packages
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - python3-pip
+        state: present
+
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+
+    - name: Install Docker
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+
+    - name: Add ubuntu user to docker group
+      user:
+        name: ubuntu
+        groups: docker
+        append: yes
+
+    - name: Install Docker Python SDK via apt
+      apt:
+        name:
+          - python3-docker
+          - python3-pip
+        state: present
+        update_cache: yes
+
+    - name: Ensure Docker is running
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Test Docker installation
+      command: docker --version
+      register: docker_version
+
+    - name: Display Docker version
+      debug:
+        msg: "{{ docker_version.stdout }}"
+
+- name: Initialize Docker Swarm on manager
+  hosts: swarm_manager
+  become: yes
+  tasks:
+    - name: Check if Swarm is already initialized
+      command: docker info
+      register: docker_info
+      changed_when: false
+      failed_when: false
+
+    - name: Initialize Docker Swarm
+      command: >
+        docker swarm init
+        --advertise-addr {{ private_ip }}
+      when: "'Swarm: inactive' in docker_info.stdout"
+      register: swarm_init
+
+    - name: Get worker join token
+      command: docker swarm join-token worker -q
+      register: worker_token
+      changed_when: false
+
+    - name: Get manager join token (for backup)
+      command: docker swarm join-token manager -q
+      register: manager_token
+      changed_when: false
+
+    - name: Display swarm status
+      command: docker node ls
+      register: node_list
+      changed_when: false
+
+    - name: Show nodes
+      debug:
+        msg: "{{ node_list.stdout_lines }}"
+
+    - name: Set worker token fact
+      set_fact:
+        swarm_worker_token: "{{ worker_token.stdout }}"
+        swarm_manager_ip: "{{ private_ip }}"
+
+- name: Join workers to Swarm
+  hosts: swarm_workers
+  become: yes
+  tasks:
+    - name: Check if already part of Swarm
+      command: docker info
+      register: docker_info
+      changed_when: false
+      failed_when: false
+
+    - name: Join Swarm as worker
+      command: >
+        docker swarm join
+        --token {{ hostvars[groups['swarm_manager'][0]].swarm_worker_token }}
+        {{ hostvars[groups['swarm_manager'][0]].swarm_manager_ip }}:2377
+      when: "'Swarm: inactive' in docker_info.stdout"
+      register: swarm_join
+
+    - name: Display join result
+      debug:
+        msg: "{{ swarm_join.stdout }}"
+      when: swarm_join.changed
+
+- name: Verify Swarm cluster
+  hosts: swarm_manager
+  become: yes
+  tasks:
+    - name: List all nodes
+      command: docker node ls
+      register: final_nodes
+      changed_when: false
+
+    - name: Display cluster status
+      debug:
+        msg: "{{ final_nodes.stdout_lines }}"
+
+    - name: Wait for all nodes to be ready
+      shell: docker node ls | grep -c " Ready "
+      register: ready_count
+      until: ready_count.stdout | int >= 3
+      retries: 10
+      delay: 5
+      changed_when: false
+
+    - name: Success message
+      debug:
+        msg: "Docker Swarm cluster with {{ ready_count.stdout }} nodes is ready!"
